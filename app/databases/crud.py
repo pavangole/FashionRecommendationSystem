@@ -1,7 +1,12 @@
+from operator import or_
+from pyexpat import model
+from unittest import result
 from sqlalchemy.orm import Session
-from app.databases import models, schemas
-
+from sqlalchemy import or_
+from databases import models, schemas
 import time
+from databases.getdb import get_db
+from typing import List
 
 
 # get system current time and convert it to unix epoch timestamp
@@ -20,31 +25,43 @@ def generate_user_id():
 def create_user(db: Session, user: schemas.UserCreate):
     # check user already exists otherwise create user
     db_user = db.query(models.User).filter(models.User.email == user.email).first()
+    print(db_user)
     if db_user:
         return False
-    db_user = models.User(email=user.email, hashed_password=user.password)
+    db_user = models.User(email=user.email, hashed_password=user.password, user_id = generate_user_id())
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
     return True
 
 
+
 def get_user_by_email(db: Session, email: str):
     return db.query(models.User).filter(models.User.email == email).first()
+
+
+def get_user_by_id(db: Session, user_id: str):
+    return db.query(models.User).filter(models.User.user_id == user_id).first()
 
 
 def create_user_info(db: Session, user: schemas.User):
     result = get_user_by_email(db, user.email)
     if result.age is not None:
         return False
-    db_user = models.User(user_id=generate_user_id(), club_member_status=user.club_member_status,
+    db_user = models.User(club_member_status=user.club_member_status,
                           fashion_news_frequency=user.fashion_news_frequency, age=user.age,
-                          postal_code=user.postal_code)
+                          postal_code=user.postal_code, name=user.name)
     hello = db_user.__dict__.copy()
     hello.pop('_sa_instance_state')
     db.query(models.User).filter(models.User.email == user.email).update(hello)
     db.commit()
     return True
+
+
+def update_user_info(db: Session, update_items: dict, user_id: str):
+    print("I am in Crud")
+    db.query(models.User).filter(models.User.user_id == user_id).update(update_items)
+    db.commit()
 
 
 def get_transactions_by_id(db: Session, id: str):
@@ -76,9 +93,53 @@ def create_transactions(db: Session, transaction: schemas.Transactions):
     # create transaction
     db_transaction = models.Transactions(user_id=transaction.user_id, item_id=transaction.item_id,
                                          sales_channel_id=transaction.sales_channel_id, timestamp=get_current_time(),
-                                         event_type=transaction.event_type, event_typ=transaction.event_typ)
+                                         event_type=transaction.event_type)
 
     db.add(db_transaction)
     db.commit()
     db.refresh(db_transaction)
     return True
+
+
+
+
+def get_items_by_item_id(db: Session, item_ids: List[str]):
+    # return db.query(models.Item).filter(or_(*[models.Item.item_id == id for id in item_ids])).all()
+    items = db.query(models.Item).filter(or_(*[models.Item.item_id == id for id in item_ids])).all()
+    return items
+
+def get_transactions_for_item(db: Session , user_id: str):
+    return db.query(models.Transactions)\
+    .filter(models.Transactions.user_id == user_id).order_by(models.Transactions.id.desc()).first()
+
+def update_password(db: Session, email: str,update_items):
+    db.query(models.User).filter(models.User.email == email).update(update_items)
+    db.commit()
+
+def suggest(db, query):
+    result =  db.query(models.Item).filter(models.Item.product_name.like('%' + query + '%')).limit(50).distinct().all()
+    items =  [item.product_name for item in result]
+    return set(items)
+
+def category(category:str, db):
+    return db.query(models.Item).filter(models.Item.index_code == category).limit(300).all()
+
+def addtocart(user_id,data,db):
+    result = getcart(user_id=user_id,db=db)
+    if result.item_ids:
+        db_user = models.Cart(item_ids=data)
+        hello = db_user.__dict__.copy()
+        print(hello)
+        hello.pop('_sa_instance_state')
+        db.query(models.Cart).filter(models.Cart.user_id == user_id).update(hello)
+        db.commit()
+        return True
+    db_items = models.Cart(user_id=user_id,item_ids = data)
+    db.add(db_items)
+    db.commit()
+    db.refresh(db_items)
+    return True
+
+def getcart(user_id,db):
+    result =  db.query(models.Cart).filter(models.Cart.user_id == user_id).first()
+    return result

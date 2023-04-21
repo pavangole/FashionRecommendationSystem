@@ -1,5 +1,10 @@
+from optparse import Option
+from typing import Optional
+
 import uvicorn
 from pydantic import BaseModel
+
+from databases.database import Base
 
 
 class ItemBase(BaseModel):
@@ -36,6 +41,8 @@ class Item(ItemBase):
 
 class UserBase(BaseModel):
     email: str
+    class Config:
+        orm_mode: True
 
 
 class UserCreate(UserBase):
@@ -47,12 +54,15 @@ class UserInfo(UserBase):
         orm_mode = True
 
 
-class User(UserBase):
-    club_member_status: str
-    fashion_news_frequency: str
-    age: int
-    postal_code: str
-
+class User(BaseModel):
+    email: Optional[str] = None
+    name: Optional[str] = None
+    club_member_status: Optional[str] = None
+    fashion_news_frequency: Optional[str] = None
+    age: Optional[int] = None
+    postal_code: Optional[str] = None
+    password: Optional[str] = None
+    new_password: Optional[str] = None
     class Config:
         orm_mode = True
 
@@ -63,12 +73,11 @@ class UserFinal(User):
 
 class Transactions(BaseModel):
     # get transactions from models.py along with data type
-    user_id: str
+    user_id: Optional[str] = None
     item_id: int
     sales_channel_id: int
-    timestamp: int
+    timestamp: Optional[str] = None
     event_type: str
-    event_typ: str
 
     class Config:
         orm_mode = True

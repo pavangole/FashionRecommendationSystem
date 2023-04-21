@@ -1,35 +1,30 @@
+import email
+from pickle import NONE
+from turtle import up
 from fastapi import APIRouter, Depends
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 from starlette.responses import Response
-from typing import Optional
+from starlette.responses import JSONResponse
+from typing import Annotated, Optional
 import base64
 from passlib.context import CryptContext
 from datetime import datetime, timedelta
-
 import jwt
 from jwt import PyJWTError
-
 from pydantic import BaseModel
-
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2
 from fastapi.security.base import SecurityBase
 from fastapi.security.utils import get_authorization_scheme_param
-from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.models import OAuthFlows as OAuthFlowsModel
-from fastapi.openapi.utils import get_openapi
-
 from starlette.status import HTTP_403_FORBIDDEN
 from starlette.responses import RedirectResponse, Response, JSONResponse
 from starlette.requests import Request
-
-
-from app.databases import schemas
-from app.databases import crud
-from app.databases.getdb import get_db
-
+from databases import schemas
+from databases import crud
+from databases.getdb import get_db
 
 router = APIRouter(prefix="/auth")
 
@@ -37,8 +32,7 @@ router = APIRouter(prefix="/auth")
 # openssl rand -hex 32
 SECRET_KEY = "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
 
 class Token(BaseModel):
@@ -48,7 +42,6 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: str = None
-
 
 
 class OAuth2PasswordBearerCookie(OAuth2):
@@ -124,11 +117,13 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
 def authenticate_user(email: str, password: str, db: Session):
     user = crud.get_user_by_email(email=email, db=db)
+    print(user.age)
+    print(user.hashed_password)
     if user is None:
-        return False
+        return None
     if user.hashed_password != password:
-        return False
-    return user
+        return None
+    return user, user.age
 
 
 def create_access_token(*, data: dict, expires_delta: timedelta = None):
@@ -136,11 +131,28 @@ def create_access_token(*, data: dict, expires_delta: timedelta = None):
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
+        expire = datetime.utcnow() + timedelta(minutes=60*12)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+async def get_current_token(token: str = Depends(oauth2_scheme),db : Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=HTTP_403_FORBIDDEN, detail="Could not validate credentials"
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except PyJWTError as e:
+        print(e)
+        raise credentials_exception
+    user = crud.get_user_by_id(user_id=token_data.username, db=db)
+    if user is None:
+        raise credentials_exception
+    return token
 
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
@@ -152,26 +164,27 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         if username is None:
             raise credentials_exception
         token_data = TokenData(username=username)
-    except PyJWTError:
+    except PyJWTError as e:
+        print(e)
         raise credentials_exception
-    user = crud.get_user_by_email(email=token_data.username, db=db)
+    user = crud.get_user_by_id(user_id=token_data.username, db=db)
     if user is None:
         raise credentials_exception
     return user
 
 
-async def get_current_active_user(current_user = Depends(get_current_user)):
+async def get_current_active_user(current_user=Depends(get_current_user)):
     return current_user
 
 
-@app.get("/")
+@router.get("/")
 async def homepage():
     return "Welcome to the security test!"
 
 
-@app.post("/token", response_model=Token)
+@router.post("/token", response_model=Token)
 async def route_login_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = authenticate_user(email=form_data.username, password=form_data.password, db=db)
+    user, age = authenticate_user(email=form_data.username, password=form_data.password, db=db)
     if not user:
         raise HTTPException(status_code=400, detail="Incorrect username or password")
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -184,48 +197,44 @@ async def route_login_access_token(form_data: OAuth2PasswordRequestForm = Depend
 @router.get("/logout")
 async def route_logout_and_remove_cookie():
     response = RedirectResponse(url="/auth/login")
-    response.delete_cookie("Authorization", domain="myproject.local")
+    response.delete_cookie("Authorization", domain=NONE)
     return response
 
 
-@router.get('/login')
+@router.post('/login')
 async def login_basic(auth: BasicAuth = Depends(basic_auth), db: Session = Depends(get_db)):
     if not auth:
-        print("not auth")
-        response = Response(headers={"WWW-Authenticate": "Basic"}, status_code=401)
-        return response
+        return JSONResponse({'status': 'failed'})
     try:
-        print("hello")
         decoded = base64.b64decode(auth).decode("ascii")
-        print(decoded)
         username, _, password = decoded.partition(":")
-        user = authenticate_user(email=username, password=password, db=db)
-        print(user)
+        user, age = authenticate_user(email=username, password=password, db=db)
         if not user:
             raise HTTPException(status_code=400, detail="Incorrect email or password")
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
-            data={"sub": username}, expires_delta=access_token_expires
+            data={"sub": user.user_id}, expires_delta=access_token_expires
         )
 
         token = jsonable_encoder(access_token)
-        response = Response()
+        redirect = "False"
+        print(age)
+        if age is None:
+            redirect = "True"
+        response = JSONResponse({'status': "success", 'redirect': redirect, 'token': token},
+                                headers={'token': "{token}"})
         response.set_cookie(
-            "Authorization",
+            key="Authorization",
             value=f"Bearer {token}",
             domain="myproject.local",
-            httponly=True,
-            max_age=1800,
-            expires=1800,
+            httponly=False,
+            max_age=86400,
+            expires=86400,
         )
-        print("hello")
         return response
 
     except Exception as e:
-        print(e)
-        response = Response(headers={"WWW-Authenticate": "Basic"}, status_code=401)
-        return response
-
+        return JSONResponse({'status': 'failed'})
 
 @router.post('/register')
 def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
@@ -239,4 +248,25 @@ def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
         return {
             "api": "v1",
             "status": "failed"
+        }
+
+@router.post("/forgot_password")
+def forgot_password(user: schemas.UserCreate,db: Session=Depends(get_db)):
+    try:
+        result = crud.get_user_by_email(email = user.email ,db=db )
+        if result:
+            dic = {'email': user.email, 'hashed_password': user.password}
+            crud.update_password(db=db,update_items=dic,email=user.email)
+            return {
+                'status': 'success',
+                'description': 'password changed succesfully'
+            }
+        return {
+            'status': 'failed',
+            'description': 'user doesnt exist'
+        }
+    except Exception as e:
+        print(e)
+        return {
+            "Internal Server Error"
         }
