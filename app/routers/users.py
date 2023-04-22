@@ -1,8 +1,3 @@
-import email
-from gettext import dpgettext
-from pyexpat import model
-from telnetlib import SE
-from turtle import update
 from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, Body
 from sqlalchemy.orm import Session
@@ -12,7 +7,6 @@ from databases import crud
 from routers.auth import get_current_token, get_current_user
 from databases.crud import get_current_time
 import boto3
-import json
 import os
 personalize_events = boto3.client('personalize-events',
                                   aws_access_key_id=os.environ.get(
@@ -60,22 +54,22 @@ def edit_info(user: schemas.User, user_id=Depends(get_current_user), db: Session
             if user.age is None:
                 print("ok")
                 print(update_items)
-                properties = {
-                    'clubMemberStatus': update_items['club_member_status'],
-                    'age': update_items['age'],
-                    'postalCode': update_items['postal_code']
-                }
+                # properties = {
+                #     'clubMemberStatus': update_items['club_member_status'],
+                #     'age': update_items['age'],
+                #     'postalCode': update_items['postal_code']
+                # }
 
-                nuser = {
-                    'userId': user.user_id,
-                    'properties': json.dumps(properties)
-                }
+                # nuser = {
+                #     'userId': user.user_id,
+                #     'properties': json.dumps(properties)
+                # }
 
-                users = [nuser]
-                response = personalize_events.put_users(
-                    datasetArn="arn:aws:personalize:ap-south-1:296410630894:dataset/FRS/USERS",
-                    users=users
-                )
+                # users = [nuser]
+                # response = personalize_events.put_users(
+                #     datasetArn="arn:aws:personalize:ap-south-1:296410630894:dataset/FRS/USERS",
+                #     users=users
+                # )
 
             crud.update_user_info(
                 db=db, update_items=update_items, user_id=user.user_id)
@@ -126,26 +120,26 @@ def create_transactions(transactions: schemas.Transactions,
     print(transactions)
     transactions.user_id = user.user_id
     transactions.timestamp = get_current_time()
-    print(token)
-    properties={
-            "sales_channel_id": transactions.sales_channel_id
-        }
-    response = personalize_events.put_events(
-        trackingId='9c45f328-e9ba-4975-ad83-b61c72e7dddd',
-        userId=transactions.user_id,
-        sessionId=token,
+    # print(token)
+    # properties={
+    #         "sales_channel_id": transactions.sales_channel_id
+    #     }
+    # response = personalize_events.put_events(
+    #     trackingId='9c45f328-e9ba-4975-ad83-b61c72e7dddd',
+    #     userId=transactions.user_id,
+    #     sessionId=token,
         
-        eventList=[
-            {
-                "sentAt": f"{get_current_time()}",
-                "eventType": "Purchase",
-                "itemId": f"{transactions.item_id}",
-                "properties": json.dumps(properties)
-            }
-        ]
+    #     eventList=[
+    #         {
+    #             "sentAt": f"{get_current_time()}",
+    #             "eventType": "Purchase",
+    #             "itemId": f"{transactions.item_id}",
+    #             "properties": json.dumps(properties)
+    #         }
+    #     ]
 
-    )
-    print(response)
+    # )
+    # print(response)
     transactions = crud.create_transactions(db=db, transaction=transactions)
     if transactions:
         return {
